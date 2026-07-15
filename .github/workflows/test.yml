@@ -1,8 +1,9 @@
 name: Test
 
 on:
-  push:
-    branches: [main]
+  # NOTE: fork-only validation branch — the `push` trigger is intentionally removed so
+  # updating the fork's default branch does not auto-run the full suite. Only the targeted
+  # workflow_dispatch below runs. (The upstream PR keeps the normal push + pull_request.)
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
   # Lets a contributor run the suite from their fork, in the fork's own context
@@ -10,6 +11,15 @@ on:
   # tps-action, this is how a fork runs the acceptance tests against its own
   # Hetzner Cloud project (see "Running acceptance tests from a fork" in the README).
   workflow_dispatch:
+    inputs:
+      packages:
+        description: "Go packages to test — groups by capability, e.g. ./internal/network"
+        default: "./..."
+        type: string
+      run:
+        description: "Regex for `go test -run` — targets tests/subtests, e.g. TestAccNetwork or TestAccNetworkResource/basic. Empty = all"
+        default: ""
+        type: string
 
 env:
   GOTOOLCHAIN: local
@@ -101,8 +111,16 @@ jobs:
           echo TF_ACC_PROVIDER_NAMESPACE="hashicorp" >> $GITHUB_ENV
           echo TF_ACC_PROVIDER_HOST="registry.opentofu.org" >> $GITHUB_ENV
 
-      - run: go test -v -timeout=30m -parallel=8 -coverprofile=coverage.txt -coverpkg=./... ./...
+      - name: Run acceptance tests
+        run: |
+          args=(-v -timeout=30m -parallel=8 -coverprofile=coverage.txt -coverpkg=./...)
+          if [ -n "$RUN_REGEX" ]; then args+=(-run "$RUN_REGEX"); fi
+          go test "${args[@]}" ${TEST_PACKAGES:-./...}
         env:
+          # Optional test selection via workflow_dispatch inputs; empty on push/pull_request → full ./... run.
+          RUN_REGEX: ${{ github.event.inputs.run }}
+          TEST_PACKAGES: ${{ github.event.inputs.packages }}
+
           # Domain must be available in the account running the tests. This domain is
           # available in the account running the public integration tests; forks can point
           # the certificate tests at a domain in their own account via the CERT_DOMAIN variable.
